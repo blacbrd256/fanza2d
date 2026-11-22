@@ -15,44 +15,22 @@ npm run demo    # ダミー作品データでレイアウト確認
 npm run serve   # http://localhost:4173 で dist/ を確認
 ```
 
-## 公開までの流れ
+## 運用の分担
 
-### 1. サイト設定を書き換える
+日々の運用は Claude の定期実行が行う（手順は `CLAUDE.md`）。毎日、記事を1本追加してプッシュし、
+そのプッシュで Cloudflare Pages が再ビルドされるので、ランキング・新着・セールも同時に最新になる。
 
-`site.config.mjs` の `name`（サイト名）・`operator`（運営者名）を決める。URL と問い合わせ先は環境変数でも設定できる。
+人が行うのは、本人のアカウントが必要な次の3つだけ（いずれも一度きり）。
 
-### 2. Cloudflare Pages にデプロイ
+1. **Cloudflare Pages にこのリポジトリを接続する**
+   Workers & Pages → Create → Pages → リポジトリを選択。Build command `npm run build`、出力ディレクトリ `dist`。
+   プロジェクト名を `fanza2d` のままにすると、公開URLを Claude が自動で検出して設定する。
+2. **公開されたURLでアフィリエイト登録・サイト審査を申請する**
+3. **審査通過後、Cloudflare Pages の環境変数に2つの値を入れる**
+   `DMM_API_ID`（Webサービスの API ID）と `DMM_AFFILIATE_ID`（末尾が `-990`〜`-999` の API 用ID）。
+   次の日次更新から作品ページが自動で生成される。
 
-Cloudflare ダッシュボード → Workers & Pages → Create → Pages → このリポジトリを接続。
-
-| 項目 | 値 |
-| --- | --- |
-| Build command | `npm run build` |
-| Build output directory | `dist` |
-
-環境変数（Settings → Variables and Secrets）:
-
-| 変数 | 内容 | 設定時期 |
-| --- | --- | --- |
-| `SITE_URL` | 公開URL（例 `https://xxxx.pages.dev`、末尾スラッシュなし） | 最初から |
-| `CONTACT_URL` | お問い合わせ先URL（Googleフォーム等） | 最初から |
-| `DMM_API_ID` | Webサービスの API ID | 審査通過後 |
-| `DMM_AFFILIATE_ID` | API 用アフィリエイトID（末尾が `-990`〜`-999` のもの） | 審査通過後 |
-
-### 3. アフィリエイト登録・サイト審査
-
-記事と固定ページ（このサイトについて／プライバシーポリシー／お問い合わせ）が公開された状態の URL で申請する。
-申請前に記事を自分の言葉で足しておくと内容が厚くなる（`content/articles/` に Markdown を追加するだけ）。
-
-### 4. API 連携を有効化
-
-審査通過後、API ID を発行して `DMM_API_ID` と `DMM_AFFILIATE_ID` を Cloudflare に登録し、再デプロイ。
-
-### 5. 毎日自動更新
-
-Cloudflare Pages の Settings → Builds → Deploy hooks でフックを作成し、その URL を GitHub の
-Settings → Secrets and variables → Actions に `CF_DEPLOY_HOOK_URL` として登録する。
-`.github/workflows/daily-deploy.yml` が毎朝 6:17（JST）に再ビルドを起動する。
+任意: 環境変数 `CONTACT_URL` にお問い合わせフォームのURLを入れると、問い合わせ先として表示される。
 
 ## 記事の書き方
 
