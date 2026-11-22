@@ -1,6 +1,7 @@
 """サンプル画像 → 自動でめくれるスライドショー動画（MP4、音声なし）。
 
-1枚ずつ全体を見せ、ゆっくり寄りながら少しだけ流す。次の画像は読む向き（右→左）に
+1枚ずつ全体を見せ、ゆっくり寄りながら少しだけ流す。画像の端は一切切らない
+（サンプルは端まで文字が入っていることがあるため）。次の画像は読む向き（右→左）に
 合わせて左から入る。上部に進み具合のバー、最後に作品名と誘導文のカードを出す。
 画面の向きは画像に合わせる（横長が多ければ横、縦長が多ければ縦）。
 
@@ -49,31 +50,40 @@ def backdrop(im, W, H):
     return (bg.astype(np.float32) * 0.3 + 8).clip(0, 255).astype(np.uint8)
 
 
+def bar_band(W):
+    """上部の進み具合バー用に空けておく帯の高さ。画像はこの帯の下にだけ置く。"""
+    return int(W * 0.045)
+
+
 class Slide:
-    ZOOM = 0.06  # 表示中に寄る量
+    ZOOM = 0.05  # 表示中に寄る量。寄り切った状態でも画像全体が枠内に収まる（端を切らない）
 
     def __init__(self, im, W, H, index):
         self.W, self.H = W, H
         self.bg = backdrop(im, W, H)
-        fit = min(W / im.shape[1], H / im.shape[0])
-        s = fit * (1 + self.ZOOM)
-        self.big = cv2.resize(im, None, fx=s, fy=s, interpolation=cv2.INTER_LANCZOS4 if s > 1 else cv2.INTER_AREA)
-        if s > 1.25:  # 拡大でぼやける分を軽く締める
+        self.top = bar_band(W)
+        self.aw, self.ah = W, H - self.top  # 画像を置ける領域
+        fit = min(self.aw / im.shape[1], self.ah / im.shape[0])
+        self.big = cv2.resize(im, None, fx=fit, fy=fit, interpolation=cv2.INTER_LANCZOS4 if fit > 1 else cv2.INTER_AREA)
+        if fit > 1.25:  # 拡大でぼやける分を軽く締める
             blur = cv2.GaussianBlur(self.big, (0, 0), 1.2)
             self.big = cv2.addWeighted(self.big, 1.3, blur, -0.3, 0)
         # 寄りながら流す向きを1枚ごとに変える
-        self.drift = [(-1, -0.6), (1, 0.6), (-1, 0.6), (1, -0.6)][index % 4]
+        self.drift = [(-1, -1), (1, 1), (-1, 1), (1, -1)][index % 4]
 
     def frame(self, t, offset_x=0.0):
         """t: 0〜1（この画像の表示の進み具合）。offset_x: めくり中の横ずれ（px）。"""
         W, H = self.W, self.H
-        z = (1 + self.ZOOM * t) / (1 + self.ZOOM)
+        z = 1 - self.ZOOM * (1 - t)  # 少し引いた状態から、ちょうど収まる大きさまで寄る
         bh, bw = self.big.shape[:2]
         sw, sh = bw * z, bh * z
-        # はみ出した分の範囲内でだけ流す（画像の端より外は見せない）
-        dx = max(0.0, sw - W) / 2 * self.drift[0] * t
-        dy = max(0.0, sh - H) / 2 * self.drift[1] * t
-        M = np.float32([[z, 0, (W - sw) / 2 + dx + offset_x], [0, z, (H - sh) / 2 + dy]])
+        # 枠内の余りの範囲でだけ流し、最後は中央に収まる
+        dx = (self.aw - sw) / 2 * self.drift[0] * (1 - t) * 0.8
+        dy = (self.ah - sh) / 2 * self.drift[1] * (1 - t) * 0.8
+        x0 = (self.aw - sw) / 2 + dx
+        y0 = self.top + (self.ah - sh) / 2 + dy
+        assert x0 >= -0.5 and y0 >= self.top - 0.5 and x0 + sw <= W + 0.5 and y0 + sh <= H + 0.5, '画像が枠からはみ出した'
+        M = np.float32([[z, 0, x0 + offset_x], [0, z, y0]])
         out = self.bg.copy()
         cv2.warpAffine(self.big, M, (W, H), dst=out, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT)
         return out
@@ -82,7 +92,8 @@ class Slide:
 def progress_bar(frame, n, index, t):
     """上部の進み具合バー（画像の枚数ぶんの区切り）。"""
     W = frame.shape[1]
-    pad, gap, h, y = int(W * 0.03), int(W * 0.008), max(5, int(W * 0.005)), int(W * 0.022)
+    h = max(5, int(W * 0.005))
+    pad, gap, y = int(W * 0.03), int(W * 0.008), (bar_band(W) - h) // 2
     seg = (W - pad * 2 - gap * (n - 1)) / n
     ov = frame.copy()
     for i in range(n):
