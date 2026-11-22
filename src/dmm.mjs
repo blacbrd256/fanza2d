@@ -69,31 +69,36 @@ export async function fetchItems({ apiId, affiliateId, service, floor, sort, hit
 }
 
 // レイアウト確認用のダミーデータ（DEMO=1 のときだけ使う。公開ビルドでは使われない）
-export function demoItems(label, n = 24) {
-  const svg = (t) =>
+export function demoItems(label, n = 40) {
+  const hue = { doujin: 268, comic: 12, pcgame: 200, anime: 150 }[label] ?? 268;
+  const svg = (t, i = 0) =>
     'data:image/svg+xml;utf8,' +
     encodeURIComponent(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="420"><rect width="100%" height="100%" fill="#3a3550"/><text x="50%" y="50%" fill="#cfc8ee" font-size="22" text-anchor="middle">${t}</text></svg>`,
+      `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="100%" height="100%" fill="hsl(${(hue + i * 23) % 360} 32% 78%)"/><text x="50%" y="54%" fill="hsl(${(hue + i * 23) % 360} 40% 30%)" font-family="sans-serif" font-size="30" font-weight="700" text-anchor="middle">${t}</text></svg>`,
     );
-  return Array.from({ length: n }, (_, i) => ({
-    id: `demo_${label}_${i + 1}`,
-    title: `【デモ】${label}のサンプル作品タイトル ${i + 1}`,
-    url: 'https://example.com/',
-    image: svg(`DEMO ${i + 1}`),
-    thumb: svg(`DEMO ${i + 1}`),
-    samples: [svg('sample 1'), svg('sample 2')],
-    priceText: String(770 + i * 10),
-    price: 770 + i * 10,
-    listPrice: i % 3 === 0 ? 1100 + i * 10 : null,
-    off: i % 3 === 0 ? Math.round((1 - (770 + i * 10) / (1100 + i * 10)) * 100) : 0,
-    date: '2026-11-01',
-    volume: '32',
-    genres: [
-      { id: String(100 + (i % 4)), name: ['ファンタジー', '学園もの', 'ラブコメ', 'SF'][i % 4] },
-    ],
-    makers: [`デモサークル${(i % 5) + 1}`],
-    authors: [],
-    series: [],
-    review: { count: 10 + i, average: 4.2 },
-  }));
+  const G = ['ファンタジー', '学園もの', 'ラブコメ', 'SF', 'フルカラー', '総集編', '日常', 'ホラー'];
+  return Array.from({ length: n }, (_, i) => {
+    const list = 660 + ((i * 37) % 9) * 110;
+    const off = i % 4 === 0 ? [30, 50, 20][i % 3] : 0;
+    const price = Math.round((list * (100 - off)) / 100);
+    return {
+      id: `demo_${label}_${i + 1}`,
+      title: `【デモ】サンプル作品タイトル その${i + 1} ～副題が長めに入る場合の表示確認～`,
+      url: 'https://example.com/',
+      image: svg(`DEMO ${i + 1}`, i),
+      thumb: svg(`DEMO ${i + 1}`, i),
+      samples: [svg('sample 1', i), svg('sample 2', i), svg('sample 3', i)],
+      priceText: String(price),
+      price,
+      listPrice: off ? list : null,
+      off,
+      date: `2026-11-${String(22 - (i % 20)).padStart(2, '0')}`,
+      volume: String(24 + ((i * 13) % 90)),
+      genres: [0, 1, 2].map((k) => ({ id: String(100 + ((i + k * 3) % G.length)), name: G[(i + k * 3) % G.length] })),
+      makers: [`デモサークル${(i % 7) + 1}`],
+      authors: [],
+      series: [],
+      review: i % 6 === 5 ? null : { count: 8 + ((i * 17) % 300), average: 3.6 + ((i * 5) % 14) / 10 },
+    };
+  });
 }
