@@ -28,8 +28,10 @@ def ease(t):
     return t * t * (3 - 2 * t)
 
 
-def canvas_size(images):
-    """画像の向きの多数派に合わせて画面サイズを決める。"""
+def canvas_size(images, style):
+    """画面サイズを決める。tour は常に縦型（スマホで大きく映る）。gentle は画像の向きの多数派に合わせる。"""
+    if style == 'tour':
+        return 1080, 1350
     ratios = sorted(im.shape[1] / im.shape[0] for im in images)
     r = ratios[len(ratios) // 2]
     if r >= 1.6:
@@ -56,36 +58,62 @@ def bar_band(W):
 
 
 class Slide:
-    ZOOM = 0.05  # 表示中に寄る量。寄り切った状態でも画像全体が枠内に収まる（端を切らない）
+    """1枚ぶんの見せ方。
 
-    def __init__(self, im, W, H, index):
+    gentle: 少し引いた状態から、画像全体がちょうど収まる大きさまで寄る。端は一切切らない。
+    tour:   まず全体を見せ、画面いっぱいまで寄ってから読む向きに流す（横長なら右→左、縦長なら上→下）。
+            流している間は画面外の部分が出るが、最初の全体表示と流しで全部が映る。
+            画像と画面の縦横比が近く、寄る余地が無いときは gentle と同じ動きになる。
+    """
+    ZOOM = 0.05
+
+    def __init__(self, im, W, H, index, style):
         self.W, self.H = W, H
         self.bg = backdrop(im, W, H)
         self.top = bar_band(W)
         self.aw, self.ah = W, H - self.top  # 画像を置ける領域
-        fit = min(self.aw / im.shape[1], self.ah / im.shape[0])
-        self.big = cv2.resize(im, None, fx=fit, fy=fit, interpolation=cv2.INTER_LANCZOS4 if fit > 1 else cv2.INTER_AREA)
-        if fit > 1.25:  # 拡大でぼやける分を軽く締める
+        self.ih, self.iw = im.shape[:2]
+        self.fit = min(self.aw / self.iw, self.ah / self.ih)
+        fill = min(max(self.aw / self.iw, self.ah / self.ih), self.fit * 2.2)
+        self.tour = style == 'tour' and fill >= self.fit * 1.2
+        self.fill = fill if self.tour else self.fit
+        self.wide = self.aw / self.iw < self.ah / self.ih  # 横にはみ出す＝横に流す
+        s = self.fill
+        self.big = cv2.resize(im, None, fx=s, fy=s, interpolation=cv2.INTER_LANCZOS4 if s > 1 else cv2.INTER_AREA)
+        if s > 1.25:  # 拡大でぼやける分を軽く締める
             blur = cv2.GaussianBlur(self.big, (0, 0), 1.2)
             self.big = cv2.addWeighted(self.big, 1.3, blur, -0.3, 0)
-        # 寄りながら流す向きを1枚ごとに変える
-        self.drift = [(-1, -1), (1, 1), (-1, 1), (1, -1)][index % 4]
+
+    def camera(self, t):
+        """(倍率, 画面中央に置く画像上の位置 fx, fy) を返す。fx, fy は 0〜1。"""
+        if not self.tour:
+            return self.fit * (1 - self.ZOOM * (1 - t)), 0.5, 0.5
+        # 0.00-0.16 全体を見せる / 0.16-0.32 寄る / 0.32-0.94 流す / 0.94-1.00 止める
+        zoom_in = ease((t - 0.16) / 0.16)
+        pan = ease((t - 0.32) / 0.62)
+        scale = self.fit + (self.fill - self.fit) * zoom_in
+        start, end = (1.0, 0.0) if self.wide else (0.0, 1.0)  # 横は右→左、縦は上→下
+        pos = 0.5 + (start - 0.5) * zoom_in + (end - start) * pan
+        return (scale, pos, 0.5) if self.wide else (scale, 0.5, pos)
 
     def frame(self, t, offset_x=0.0):
         """t: 0〜1（この画像の表示の進み具合）。offset_x: めくり中の横ずれ（px）。"""
-        W, H = self.W, self.H
-        z = 1 - self.ZOOM * (1 - t)  # 少し引いた状態から、ちょうど収まる大きさまで寄る
-        bh, bw = self.big.shape[:2]
-        sw, sh = bw * z, bh * z
-        # 枠内の余りの範囲でだけ流し、最後は中央に収まる
-        dx = (self.aw - sw) / 2 * self.drift[0] * (1 - t) * 0.8
-        dy = (self.ah - sh) / 2 * self.drift[1] * (1 - t) * 0.8
-        x0 = (self.aw - sw) / 2 + dx
-        y0 = self.top + (self.ah - sh) / 2 + dy
-        assert x0 >= -0.5 and y0 >= self.top - 0.5 and x0 + sw <= W + 0.5 and y0 + sh <= H + 0.5, '画像が枠からはみ出した'
+        scale, fx, fy = self.camera(t)
+        sw, sh = self.iw * scale, self.ih * scale
+
+        def place(size, area, f):  # 画像が領域より大きければ端を越えて余白を出さない。小さければ中央
+            if size <= area:
+                return (area - size) / 2
+            return min(0.0, max(area - size, area / 2 - f * size))
+
+        x0 = place(sw, self.aw, fx)
+        y0 = self.top + place(sh, self.ah, fy)
+        z = scale / self.fill
         M = np.float32([[z, 0, x0 + offset_x], [0, z, y0]])
         out = self.bg.copy()
-        cv2.warpAffine(self.big, M, (W, H), dst=out, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT)
+        cv2.warpAffine(self.big, M, (self.W, self.H), dst=out, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT)
+        if y0 < self.top:  # 縦に流すとき、バーの帯に画像がかからないようにする
+            out[:self.top] = self.bg[:self.top]
         return out
 
 
@@ -158,17 +186,19 @@ def end_card(bg, title, circle, cta, count):
     return cv2.cvtColor(np.array(im), cv2.COLOR_RGB2BGR)
 
 
-def build(paths, title, circle, cta, seconds, max_seconds):
+def build(paths, title, circle, cta, seconds, max_seconds, style):
     images = [im for im in (cv2.imread(p) for p in paths) if im is not None]
     if not images:
         raise SystemExit('画像を読めませんでした')
-    W, H = canvas_size(images)
+    W, H = canvas_size(images, style)
     card_sec, turn = 2.6, int(0.42 * FPS)
-    seconds = min(seconds, (max_seconds - card_sec) / len(images))
-    hold = max(int(seconds * FPS), turn * 2)
-    slides = [Slide(im, W, H, i) for i, im in enumerate(images)]
+    slides = [Slide(im, W, H, i, style) for i, im in enumerate(images)]
     n = len(slides)
+    # 流す画像は、流す距離のぶん長く見せる
+    secs = [seconds * (1.7 if s.tour else 1.0) for s in slides]
+    k = min(1.0, (max_seconds - card_sec) / sum(secs))
     for i, s in enumerate(slides):
+        hold = max(int(secs[i] * k * FPS), turn * 2)
         for f in range(hold):
             t = f / hold
             if i > 0 and f < turn:  # めくり: 前の画像が右へ出て、次の画像が左から入る
@@ -210,9 +240,10 @@ if __name__ == '__main__':
     ap.add_argument('--title', default='')
     ap.add_argument('--circle', default='')
     ap.add_argument('--cta', default='続きは商品ページで')
-    ap.add_argument('--seconds', type=float, default=3.2, help='1枚あたりの表示秒数')
+    ap.add_argument('--seconds', type=float, default=3.2, help='1枚あたりの表示秒数（流す画像は1.7倍）')
+    ap.add_argument('--style', choices=['tour', 'gentle'], default='tour')
     ap.add_argument('--max-seconds', type=float, default=60, help='動画全体の上限秒数')
     ap.add_argument('images', nargs='+')
     a = ap.parse_args()
-    count, (w, h) = encode(build(a.images, a.title, a.circle, a.cta, a.seconds, a.max_seconds), a.out)
+    count, (w, h) = encode(build(a.images, a.title, a.circle, a.cta, a.seconds, a.max_seconds, a.style), a.out)
     print(f'{a.out}: {len(a.images)}枚, {w}x{h}, {count / FPS:.1f}秒, {os.path.getsize(a.out) / 1e6:.1f}MB')
