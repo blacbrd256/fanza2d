@@ -1,0 +1,14 @@
+{
+  "name": "fanza2d",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node src/build.mjs",
+    "demo": "DEMO=1 node src/build.mjs",
+    "serve": "npx --yes serve dist -l 4173"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "marked": "^14.1.4"
+  }
+}
